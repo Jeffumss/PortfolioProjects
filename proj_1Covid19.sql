@@ -44,15 +44,6 @@ where continent not like ''
 Group by location
 Order by TotalDeathCount desc;
 
--- SELECT @@GLOBAL.sql_mode;
--- -- SELECT @@SESSION.sql_mode;
--- SET @@global.sql_mode= 'NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';
--- SET GLOBAL sql_mode = 'NO_BACKSLASH_ESCAPES,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';
--- set global sql_mode='NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';
--- set session sql_mode='';
--- SHOW VARIABLES LIKE 'sql_mode';
--- select @@GLOBAL.sql_mode;
-
 
 -- BREAKING DOWN BY CONTINENT
 
