@@ -1,0 +1,215 @@
+---
+title: "Visualization & Predictive Analysis"
+author: "Jeffrey Biondi"
+output: 
+    rmdformats::readthedown:
+    self_contained: true
+    thumbnails: true
+    lightbox: true
+    gallery: false
+    highlight: tango
+    css: custom.css
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Loading Data & Packages
+```{r echo=T, results = 'hide', error=FALSE, warning=FALSE, message=FALSE}
+options(scipen = 999)
+
+library(tidyverse)
+library(cluster)
+library(factoextra)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(tidymodels)
+library(DT)
+library(rattle)
+library(scales)
+library(lemon)
+library(plotly)
+library(lubridate)
+library(ggplot2)
+
+myData <- read.csv('database.csv')
+
+view(myData)
+```
+
+
+# Part One - Data Exploration
+  
+## Visual 1 
+```{r}
+
+
+annual_fuel_cost_by_type <- myData %>%
+  filter(Fuel.Type.1 != 'Natural Gas') %>%
+  ggplot() +
+  geom_boxplot(show.legend = F) + 
+  aes(x = Fuel.Type.1, y = Annual.Fuel.Cost..FT1., fill = Fuel.Type.1) +
+  scale_y_continuous(labels = dollar_format()) +
+  labs(x = "Fuel Type", y = "Annual Fuel Cost",title = "Annual Fuel Cost by Type") +
+  coord_flip() 
+  #shows the $ amount for each fuel type group
+
+ggplotly(annual_fuel_cost_by_type)
+
+
+```
+**This box plot visualizes the differences in yearly fuel costs for the different gas types. It shows how much money Electric cars save, over a $1,000, versus gasoline cars yearly. Also from the data, annual fuel costs for Premium Gasoline is the highest and has the most variance.**
+
+## Visual 2
+```{r}
+myData %>%
+  group_by(Fuel.Type.1) %>%
+  filter(Fuel.Type.1 != 'Electricity')%>% 
+  summarise(averageMPG = mean(Combined.MPG..FT1.)) %>% #calculating avg MPG per Fuel Type
+  ggplot() + 
+  aes(x = averageMPG, y= Fuel.Type.1 , fill = Fuel.Type.1) +
+  geom_col(show.legend = F) +
+  labs(x = "Average MPG", y = "Fuel Type", title = "Average MPG by Fuel Type")
+```
+**Now I am comparing the average miles per gallon for cars of each fuel type. According to the visual, Diesel gasoline has the best fuel efficiency.**
+
+
+## Visual 3
+```{r warning=FALSE}
+myData %>%
+  group_by(Engine.Cylinders) %>%
+  summarise(averageMPG = mean(Combined.MPG..FT1.)) %>%
+  ggplot(aes(x = Engine.Cylinders, y = averageMPG, fill = Engine.Cylinders))+
+  geom_col() +
+  labs(title = "Average MPG by Engine Cylinder", y = "Average MPG", x = "Engine Cylinders", fill = "Cylinders")
+  #shows MPG average grouped by cylinders
+```
+**The bar graph visualizes the average combined MPG grouped by the vehicles' engine size. This identifies that the less cylinders, the smaller the engine; therefore, the vehicle will have a greater MPG. According to the data, 4 cylinder cars average almost 10 more miles per gallon than v8s.**
+
+## Visual 4
+```{r echo=T, results = 'hide', error=FALSE, warning=FALSE, message=FALSE}
+boostedVehicles <- myData %>% 
+  mutate(noTurbo = is.na(Turbocharger)) %>%
+  mutate(noSuperCharger = ifelse(Supercharger == 'S', FALSE, TRUE)) %>%
+  mutate(hasBoost = (ifelse(noTurbo== FALSE | noSuperCharger == FALSE , 'BOOST!', 'No Boost'))) %>%
+  filter(hasBoost == 'BOOST!')
+#getting only vehicles with boost
+
+boostedVehicles %>%
+  group_by(Year) %>%
+  summarise(avergaeCombinedMPG = mean((City.MPG..FT1. + Highway.MPG..FT1.)/2)) %>%
+  ggplot(aes(x = Year, y = avergaeCombinedMPG))+
+  geom_line()+
+  geom_smooth(method = 'lm', se = FALSE) + 
+  labs(title = 'Average MPG per Year for Boosted Cars', y = 'Combined MPG', x = 'Year')
+  #seeing MPG vs Time for boosted cars
+
+```
+**The line graph shows the difference over time of the average MPG for boosted cars. 'Boosted cars' refers to cars that have either a Turbocharger or Supercharger. These are devices that increase an engine's internal combustion (they push air into the engine) and therefore increase power. The line graph shows that as time goes on, the average MPG increases. We can infer that the increase in average MPG is a result of advancements in technology that allow for better fuel efficiency than in previous years. From 2007 to today, the average MPG has increased by almost 5 miles.**
+
+## Visual 5
+```{r}
+myData.features <- myData%>%
+  select(City.MPG..FT1., Highway.MPG..FT1., Unadjusted.Highway.MPG..FT1. , Unadjusted.City.MPG..FT1. )
+
+
+myClusters <- kmeans(myData.features,3)
+
+
+# Viewing Clusters
+table(myData$Class, myClusters$cluster)
+
+#Plot our results to see what we get
+plot(myData[c("City.MPG..FT1.","Highway.MPG..FT1.")], col = myClusters$cluster)
+
+
+```
+**After performing the K-means algorithm on the City and Highway MPG, I found that there are 3 optimal clusters to this data. I ran the algorithm with 2 and 4 clusters and found too many data points were being held in 2 clusters, and too little data points were found with 4 clusters. The most data points were Compact Cars, Midsize Cars, and Subcompact Cars because these are the most common type of vehicles.**
+
+# Part Two - Predicitve Analysis
+## Partioning the Data
+```{r}
+carsData <- myData %>%
+  select(Vehicle.ID, Year, Make, Model,Class, Drive, Transmission, Engine.Cylinders, Engine.Displacement,Turbocharger,Supercharger, Fuel.Type.1, City.MPG..FT1.,Highway.MPG..FT1., Annual.Fuel.Cost..FT1.)%>%
+  drop_na()
+#getting needed cols/ removing nulls
+
+set.seed(1)
+cars_split <- initial_split(carsData, prop = .75)
+
+cars_training <- training(cars_split)
+
+cars_testing <- testing(cars_split)
+```
+
+## Predicting Highway MPG
+```{r echo=T, results = 'hide', error=FALSE, warning=FALSE, message=FALSE}
+
+training_model_Highway <- lm(formula = Highway.MPG..FT1. ~  Year+ Engine.Cylinders+ Engine.Displacement+ City.MPG..FT1.+ Highway.MPG..FT1.+ Annual.Fuel.Cost..FT1., data = cars_training) #predicting mpg using the selected columns (integers only)
+
+summary(training_model_Highway)
+
+ggplot(data = training_model_Highway) +
+  aes(x = training_model_Highway$residuals)+
+  geom_histogram()+
+  labs(x = 'Highway MPG Training Residuals', y = 'Count', title = 'Distribution of Highway MPG LM Residuals')
+#the distribution is minimal. high freq. at zero for residuals. errors are close to 0 and symmetric
+```
+**The Highway MPG linear regression model has a nice symmetric distribution of residuals. The visual shows that the residuals have a high frequency around zero. Having errors close to zero, with the median residual of 0.0645, proves the original model is a good fit.**
+
+## Predicting City MPG
+```{r warning=FALSE}
+
+training_model_City <- lm(City.MPG..FT1. ~ Year+ Engine.Cylinders+ Engine.Displacement+ City.MPG..FT1.+ Highway.MPG..FT1.+ Annual.Fuel.Cost..FT1., data = cars_training) #building the model with select cols
+
+summary(training_model_City)
+
+ggplot(data = training_model_City) +
+  aes(x = training_model_City$residuals)+
+  geom_histogram(bins = 20)+
+  labs(x = 'City MPG Training Residuals', y = 'Count', title = 'Distribution of City MPG LM Residuals')
+
+```
+**The City MPG linear regression model has errors close to zero. This shows the model predicts accurately (no under/over bias). With a median residual of -0.136, the residuals are symmetrically distributed around zero. However, the model signifies that a car's engine displacement variable is not a valuable addition to the model with a p-value of 0.561. Also this model does have some outlying residuals.**
+
+## Class of a Vehicle Decision Tree Model
+```{r warning=FALSE}
+
+
+newData <- myData %>%
+  select(-Vehicle.ID) %>%
+  filter(Make == "Ford") %>%# filtering Ford cars from 1990+
+  filter(Year >= 1990) %>%
+  mutate(Class = ifelse(Class == c("Subcompact Cars", "Compact Cars", "Midsize Cars"), c("Subcompact Cars", "Compact Cars", "Midsize Cars"), "Other")) %>%
+  mutate(Class = as.factor(Class))
+
+
+set.seed(1)
+
+split <- initial_split(newData, prop = 0.7)
+training_data <- training(split)
+validation_data <- testing(split)
+#splitting data
+
+class_tree <- rpart(Class ~ Engine.Cylinders + City.MPG..FT1., data = training_data, parms = list(split = "gini"), method = "class", control = rpart.control(cp = 0, minsplit = 1, minbucket = 1))
+#building the tree model wt cylinders & city mpg
+
+prp(class_tree, faclen = 0, varlen = 0, cex = 0.75, yesno = 2)
+
+```
+**Using the decision tree I am able to classify based on engine cylinders and city miles per gallon, whether a vehicle is a compact car, subcompact car, or midsize car class. According to the model, Compact Cars consists of 4 cylinder engines and at least 30 mpg in the city. Vehicles with engines larger than 5 cylinders and get between 20 to 22 city mpg, are classified as Midsize cars. Vehicles with engines of greater than 7 cylinders and a city MPG of more than 18 are classified as Subcompact cars. Looking into the prediction test by utilizing the Confusion Matrix, I am able to see that this decision tree is highly effective in determining if vehicles fall into the "Other" category (not compact, subcompact, or midsize) in vehicle class.**
+
+```{r}
+prediction_test <- predict(class_tree, newdata = training_data, type = "class")
+prediction_test1 <- predict(class_tree, newdata = validation_data, type = "class")
+
+#View(as.data.frame(prediction_test))
+
+confusionMatrix(prediction_test, training_data$Class) #to see how right your prediction test is
+
+confusionMatrix(prediction_test1, validation_data$Class)
+
+```
